@@ -24,7 +24,6 @@ services:
       - db
     environment:
       DB_URL: postgres://postgres:pass@db:5432/prdb?sslmode=disable
-    # Даём БД время подняться
     command: >
       sh -c "
       sleep 5 &&
