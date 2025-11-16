@@ -2,9 +2,9 @@ package handlers
 
 import (
 	"avito_intern_dev/models"
+	"avito_intern_dev/tst_logic"
 	"errors"
 	"math/rand"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -131,32 +131,21 @@ func CreatePR(db *gorm.DB) gin.HandlerFunc {
 		}
 		var author models.User
 		err := db.Where("id = ?", req.AuthorID).First(&author).Error
-		// err := db.Preload("Team").First(&author, "id = ?", req.AuthorID).Error
 		if err != nil {
 			respondError(c, 404, "NOT_FOUND", "author not found")
 			return
 		}
 
-		now := time.Now()
 		pr := models.PullRequest{
-			ID:        req.PR_ID,
-			Name:      req.Name,
-			AuthorId:  req.AuthorID,
-			Status:    "OPEN",
-			CreatedAt: &now,
+			ID:       req.PR_ID,
+			Name:     req.Name,
+			AuthorId: req.AuthorID,
+			Status:   "OPEN",
 		}
 
 		var candidates []models.User
 		db.Where("team_name = ? AND is_active = ? AND id != ?", author.TeamName, true, author.ID).Find(&candidates)
-
-		if len(candidates) < 2 {
-			pr.AssignedReviewers = candidates
-		} else {
-			rand.Shuffle(len(candidates), func(i, j int) { candidates[i], candidates[j] = candidates[j], candidates[i] })
-			candidates = candidates[:2]
-			pr.AssignedReviewers = candidates
-
-		}
+		pr.AssignedReviewers = tst_logic.GenerateUsers(candidates)
 		db.Create(&pr)
 
 		var result models.PullRequest
@@ -181,9 +170,7 @@ func MergePR(db *gorm.DB) gin.HandlerFunc {
 		}
 
 		if pr.Status != "MERGED" {
-			now := time.Now()
 			pr.Status = "MERGED"
-			pr.MergedAt = &now
 			db.Save(&pr)
 		}
 
@@ -212,12 +199,10 @@ func ReassignReviewer(db *gorm.DB) gin.HandlerFunc {
 			respondError(c, 409, "PR_MERGED", PrMerged.Error())
 			return
 		}
-
-		var oldReviewer models.User
 		found := false
+
 		for _, r := range pr.AssignedReviewers {
 			if r.ID == req.OldUserID {
-				oldReviewer = r
 				found = true
 				break
 			}
@@ -226,44 +211,40 @@ func ReassignReviewer(db *gorm.DB) gin.HandlerFunc {
 			respondError(c, 409, "NOT_ASSIGNED", notAssigned.Error())
 			return
 		}
+		var candidates []models.User
+		result := []models.User{}
+		// excludeList := []string{pr.AuthorId, req.OldUserID}
+		db.Where("team_name = ? AND is_active = ?", pr.AssignedReviewers[0].TeamName, true).Find(&candidates)
 
-		// Кандидаты из команды oldReviewer
-		exclude := map[string]bool{pr.AuthorId: true, req.OldUserID: true}
-		for _, r := range pr.AssignedReviewers {
-			if r.ID != req.OldUserID {
-				exclude[r.ID] = true
+		for _, r := range candidates {
+			if r.ID != req.OldUserID && r.ID != pr.AuthorId {
+				result = append(result, r)
 			}
 		}
 
-		var candidates []models.User
-		var excludeList []string
-		for id := range exclude {
-			excludeList = append(excludeList, id)
-		}
-
-		db.Where("team_name = ? AND is_active = ? AND id NOT IN ?", oldReviewer.TeamName, true, excludeList).
-			Find(&candidates)
-
-		if len(candidates) == 0 {
+		if len(result) == 0 {
 			respondError(c, 409, "NO_CANDIDATE", notAssigned.Error())
 			return
 		}
+		db.Model(&pr).Association("AssignedReviewers").Delete(&models.User{ID: req.OldUserID})
 
-		newReviewer := candidates[rand.Intn(len(candidates))]
-		newReviewers := []models.User{newReviewer}
-		for _, r := range pr.AssignedReviewers {
-			if r.ID != req.OldUserID {
-				newReviewers = append(newReviewers, r)
-			}
-		}
-		pr.AssignedReviewers = newReviewers
-		db.Save(&pr)
+		var newReviewer models.User
 
+		newReviewer = result[rand.Intn(len(result))]
+		db.Model(&pr).Association("AssignedReviewers").Append(&newReviewer)
+
+		// 3. Перезагружаем
 		var updated models.PullRequest
 		db.Preload("AssignedReviewers").First(&updated, "id = ?", req.PR_ID)
 
 		c.JSON(200, gin.H{
-			"pr":          updated,
+			"pr": gin.H{
+				"pull_request_id":    updated.ID,
+				"pull_request_name":  updated.Name,
+				"author_id":          updated.AuthorId,
+				"status":             updated.Status,
+				"assigned_reviewers": updated.AssignedReviewers,
+			},
 			"replaced_by": newReviewer.ID,
 		})
 	}
@@ -288,5 +269,43 @@ func GetUserReviews(db *gorm.DB) gin.HandlerFunc {
 				"status":            pr.Status,
 			})
 		}
+		c.JSON(200, gin.H{
+			"user_id":       userID,
+			"pull_requests": shortPRs,
+		})
+	}
+}
+
+func GetStatistics(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		teamName := c.Query("team_name")
+		if teamName == "" {
+			c.JSON(400, gin.H{"error": "team_name requred"})
+			return
+		}
+		var team models.Team
+		err := db.First(&team, "name = ?", teamName).Error
+		if err != nil {
+			respondError(c, 404, "TEAM_NOT_FOUND", "team_not_found")
+			return
+		}
+		var users []models.User
+
+		db.Where("team_name = ?", teamName).Find(&users)
+
+		stats := []gin.H{}
+		for _, user := range users {
+			var count int64
+			db.Table("pull_requests").Joins("JOIN pr_reviewers ON pr_reviewers.pull_request_id = pull_requests.id").Where("pr_reviewers.user_id = ?", user.ID).Where("pull_requests.status = ?", "OPEN").Count(&count)
+			stats = append(stats, gin.H{
+				"user_id":       user.ID,
+				"username":      user.Username,
+				"review_counts": count,
+			})
+		}
+		c.JSON(200, gin.H{
+			"team_name": teamName,
+			"stats":     stats,
+		})
 	}
 }

@@ -17,9 +17,7 @@ func main() {
 		log.Fatal("Could not connect to DB", err)
 	}
 	db.AutoMigrate(&models.Team{}, &models.User{}, &models.PullRequest{})
-
 	r := gin.Default()
-
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
@@ -27,5 +25,9 @@ func main() {
 	r.GET("/team/get", handlers.GetTeam(db))
 	r.POST("/users/setIsActive", handlers.SetIsActive(db))
 	r.POST("/pullRequest/create", handlers.CreatePR(db))
+	r.POST("/pullRequest/reassign", handlers.ReassignReviewer(db))
+	r.GET("/users/getReview", handlers.GetUserReviews(db))
+	r.POST("/pullRequest/merge", handlers.MergePR(db))
+	r.GET("/team/getStat", handlers.GetStatistics(db))
 	r.Run(":8080")
 }
