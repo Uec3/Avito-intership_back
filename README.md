@@ -62,6 +62,10 @@ sudo docker-compose up --build
 
 ** Все чувствительные данные вынесеныы в переменные окружения**
 
--- `DB_CONN` -- строка подключения к бд
--- `APP_PORT` -- порт приложения
--- `DB_PASSWORD` -- пароль базы данных
+- `DB_CONN` -- строка подключения к бд
+- `APP_PORT` -- порт приложения
+- `DB_PASSWORD` -- пароль базы данных
+## Стандартные значения 
+- DB_PASSWORD=pass
+- DB_CONN=postgres://postgres:pass@db:5432/prdb?sslmode=disable 
+- APP_PORT=8080
