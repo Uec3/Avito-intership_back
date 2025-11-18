@@ -3,31 +3,39 @@ version: '3.8'
 services:
   db:
     image: postgres:16-alpine
-    container_name: pr-reviewer-db
-    restart: always
+    container_name: pr_db
+    restart: unless-stopped
+    env_file:
+      - .env                                 
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: pass
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: prdb
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d prdb"]
+      interval: 3s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
 
   app:
     build: .
-    container_name: pr-reviewer-app
-    restart: always
+    container_name: pr_app
+    restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "${APP_PORT:-8080}:8080"
+    env_file:
+      - .env                                   
     depends_on:
-      - db
-    environment:
-      DB_URL: postgres://postgres:pass@db:5432/prdb?sslmode=disable
+      db:
+        condition: service_healthy              
     command: >
       sh -c "
-      sleep 5 &&
-      ./main
+        echo 'Ожидание БД...' &&
+        sleep 3 &&
+        ./main
       "
 
 volumes:

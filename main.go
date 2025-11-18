@@ -4,6 +4,7 @@ import (
 	"avito_intern_dev/handlers"
 	"avito_intern_dev/models"
 	"log"
+	"os"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/postgres"
@@ -11,8 +12,8 @@ import (
 )
 
 func main() {
-	dsn := "host = db user=postgres password=pass dbname=prdb port=5432 sslmode=disable"
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	dbURR := os.Getenv("DB_CONN")
+	db, err := gorm.Open(postgres.Open(dbURR), &gorm.Config{})
 	if err != nil {
 		log.Fatal("Could not connect to DB", err)
 	}
